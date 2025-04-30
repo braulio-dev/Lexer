@@ -8,6 +8,7 @@ typedef struct {
     Lexer* lexer;
     Token* current_token;
     Token* lookahead_token;
+    int debug;  // Debug mode flag
 } Parser;
 
 // Function declarations
@@ -16,6 +17,7 @@ void destroy_parser(Parser* parser);
 void parse(Parser* parser);
 void match(Parser* parser, TokenType expected_type);
 void advance(Parser* parser);
+void set_debug_mode(Parser* parser, int debug);
 
 // Grammar rule functions
 void parse_class(Parser* parser);

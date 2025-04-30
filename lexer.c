@@ -254,7 +254,7 @@ void print_token(Token* token) {
         "PUNCTUATION", "COMMENT", "WHITESPACE", "EOF"
     };
     
-    printf("Token: %s (%s) at line %d, column %d\n",
-           token->value, type_names[token->type],
-           token->line, token->column);
+    fprintf(stderr, "%s '%s' at %d:%d",
+            type_names[token->type], token->value,
+            token->line, token->column);
 } 

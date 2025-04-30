@@ -11,8 +11,14 @@ Parser* create_parser(Lexer* lexer) {
     parser->lexer = lexer;
     parser->current_token = get_next_token(lexer);
     parser->lookahead_token = get_next_token(lexer);
+    parser->debug = 0;  // Debug mode disabled by default
 
     return parser;
+}
+
+// Set debug mode
+void set_debug_mode(Parser* parser, int debug) {
+    parser->debug = debug;
 }
 
 // Destroy the parser
@@ -35,12 +41,23 @@ void advance(Parser* parser) {
 
 // Match the current token with the expected type
 void match(Parser* parser, TokenType expected_type) {
+    const char* type_names[] = {
+        "IDENTIFIER", "KEYWORD", "OPERATOR", "LITERAL",
+        "PUNCTUATION", "COMMENT", "WHITESPACE", "EOF"
+    };
+    
     if (parser->current_token->type == expected_type) {
-        printf("Matched token: %s\n", parser->current_token->value);
+        if (parser->debug) {
+            fprintf(stderr, "Matched token: %s '%s' at %d:%d\n",
+                    type_names[parser->current_token->type],
+                    parser->current_token->value,
+                    parser->current_token->line,
+                    parser->current_token->column);
+        }
         advance(parser);
     } else {
-        fprintf(stderr, "Syntax error: Expected token type %d, got %d at line %d, column %d\n",
-                expected_type, parser->current_token->type,
+        fprintf(stderr, "Syntax error: Expected token type %s, got %s at line %d, column %d\n",
+                type_names[expected_type], type_names[parser->current_token->type],
                 parser->current_token->line, parser->current_token->column);
         exit(1);
     }
@@ -48,8 +65,6 @@ void match(Parser* parser, TokenType expected_type) {
 
 // Parse a class declaration
 void parse_class(Parser* parser) {
-    printf("Parsing class declaration\n");
-    
     // Match class keyword
     match(parser, TOKEN_KEYWORD);
     
@@ -65,7 +80,6 @@ void parse_class(Parser* parser) {
 
 // Parse class body
 void parse_class_body(Parser* parser) {
-    printf("Parsing class body\n");
     int brace_count = 1; // Count the opening brace we just saw
     
     while (brace_count > 0) {
@@ -100,7 +114,6 @@ void parse_class_body(Parser* parser) {
 
 // Parse a method declaration
 void parse_method(Parser* parser) {
-    printf("Parsing method declaration\n");
     int brace_count = 0;
     
     // Match access modifier
@@ -162,65 +175,118 @@ void parse_method(Parser* parser) {
 
 // Parse a statement
 void parse_statement(Parser* parser) {
-    printf("Parsing statement\n");
-    
-    if (parser->current_token->type == TOKEN_KEYWORD) {
-        // Variable declaration
-        if (strcmp(parser->current_token->value, "int") == 0 ||
-            strcmp(parser->current_token->value, "String") == 0) {
-            advance(parser); // Skip type
-            match(parser, TOKEN_IDENTIFIER); // Variable name
+    // Handle variable declarations
+    if (parser->current_token->type == TOKEN_KEYWORD &&
+        (strcmp(parser->current_token->value, "int") == 0 ||
+         strcmp(parser->current_token->value, "String") == 0)) {
+        // Save the type
+        char* type = strdup(parser->current_token->value);
+        advance(parser); // Skip type
+        
+        // Get variable name
+        if (parser->current_token->type != TOKEN_IDENTIFIER) {
+            fprintf(stderr, "Syntax error: Expected IDENTIFIER after type '%s' at line %d, column %d\n",
+                    type, parser->current_token->line, parser->current_token->column);
+            free(type);
+            exit(1);
+        }
+        char* name = strdup(parser->current_token->value);
+        advance(parser); // Skip variable name
+        
+        // Handle initialization
+        if (parser->current_token->type == TOKEN_OPERATOR &&
+            strcmp(parser->current_token->value, "=") == 0) {
+            advance(parser); // Skip =
             
-            // Handle initialization
-            if (parser->current_token->type == TOKEN_OPERATOR &&
-                strcmp(parser->current_token->value, "=") == 0) {
-                advance(parser); // Skip =
-                parse_expression(parser);
+            // Handle the value
+            if (parser->current_token->type == TOKEN_LITERAL ||
+                parser->current_token->type == TOKEN_IDENTIFIER) {
+                advance(parser);
+            } else {
+                fprintf(stderr, "Syntax error: Expected value after '=' in declaration of '%s %s' at line %d, column %d\n",
+                        type, name, parser->current_token->line, parser->current_token->column);
+                free(type);
+                free(name);
+                exit(1);
             }
-            match(parser, TOKEN_PUNCTUATION); // ;
-            return;
         }
         
-        // If statement
-        if (strcmp(parser->current_token->value, "if") == 0) {
+        // Expect semicolon
+        if (parser->current_token->type != TOKEN_PUNCTUATION ||
+            strcmp(parser->current_token->value, ";") != 0) {
+            fprintf(stderr, "Syntax error: Expected ';' after variable declaration '%s %s' at line %d, column %d\n",
+                    type, name, parser->current_token->line, parser->current_token->column);
+            free(type);
+            free(name);
+            exit(1);
+        }
+        advance(parser); // Skip semicolon
+        
+        free(type);
+        free(name);
+        return;
+    }
+    
+    // Handle if statements
+    if (parser->current_token->type == TOKEN_KEYWORD &&
+        strcmp(parser->current_token->value, "if") == 0) {
+        advance(parser);
+        match(parser, TOKEN_PUNCTUATION); // (
+        parse_expression(parser);
+        match(parser, TOKEN_PUNCTUATION); // )
+        match(parser, TOKEN_PUNCTUATION); // {
+        
+        while (parser->current_token->type != TOKEN_PUNCTUATION ||
+               strcmp(parser->current_token->value, "}") != 0) {
+            parse_statement(parser);
+        }
+        match(parser, TOKEN_PUNCTUATION); // }
+        
+        // Handle else
+        if (parser->current_token->type == TOKEN_KEYWORD &&
+            strcmp(parser->current_token->value, "else") == 0) {
             advance(parser);
-            match(parser, TOKEN_PUNCTUATION); // (
-            parse_expression(parser);
-            match(parser, TOKEN_PUNCTUATION); // )
             match(parser, TOKEN_PUNCTUATION); // {
-            
             while (parser->current_token->type != TOKEN_PUNCTUATION ||
                    strcmp(parser->current_token->value, "}") != 0) {
                 parse_statement(parser);
             }
             match(parser, TOKEN_PUNCTUATION); // }
-            
-            // Handle else
-            if (parser->current_token->type == TOKEN_KEYWORD &&
-                strcmp(parser->current_token->value, "else") == 0) {
-                advance(parser);
-                match(parser, TOKEN_PUNCTUATION); // {
-                while (parser->current_token->type != TOKEN_PUNCTUATION ||
-                       strcmp(parser->current_token->value, "}") != 0) {
-                    parse_statement(parser);
-                }
-                match(parser, TOKEN_PUNCTUATION); // }
-            }
-            return;
         }
+        return;
     }
     
-    // Method call or assignment
+    // Handle method calls and assignments
     if (parser->current_token->type == TOKEN_IDENTIFIER) {
-        // Save the identifier
         char* identifier = strdup(parser->current_token->value);
         advance(parser);
+        
+        // Handle dot notation (e.g., System.out.println)
+        while (parser->current_token->type == TOKEN_PUNCTUATION &&
+               strcmp(parser->current_token->value, ".") == 0) {
+            advance(parser); // Skip dot
+            if (parser->current_token->type == TOKEN_IDENTIFIER) {
+                advance(parser);
+            } else {
+                fprintf(stderr, "Syntax error: Expected identifier after '.' at line %d, column %d\n",
+                        parser->current_token->line, parser->current_token->column);
+                free(identifier);
+                exit(1);
+            }
+        }
         
         // Method call
         if (parser->current_token->type == TOKEN_PUNCTUATION &&
             strcmp(parser->current_token->value, "(") == 0) {
             parse_method_call(parser);
-            match(parser, TOKEN_PUNCTUATION); // ;
+            if (parser->current_token->type != TOKEN_PUNCTUATION ||
+                strcmp(parser->current_token->value, ";") != 0) {
+                fprintf(stderr, "Syntax error: Expected ';' after method call at line %d, column %d\n",
+                        parser->current_token->line, parser->current_token->column);
+                free(identifier);
+                exit(1);
+            }
+            advance(parser); // Skip semicolon
             free(identifier);
             return;
         }
@@ -230,7 +296,14 @@ void parse_statement(Parser* parser) {
             strcmp(parser->current_token->value, "=") == 0) {
             advance(parser);
             parse_expression(parser);
-            match(parser, TOKEN_PUNCTUATION); // ;
+            if (parser->current_token->type != TOKEN_PUNCTUATION ||
+                strcmp(parser->current_token->value, ";") != 0) {
+                fprintf(stderr, "Syntax error: Expected ';' after assignment to '%s' at line %d, column %d\n",
+                        identifier, parser->current_token->line, parser->current_token->column);
+                free(identifier);
+                exit(1);
+            }
+            advance(parser); // Skip semicolon
             free(identifier);
             return;
         }
@@ -240,7 +313,13 @@ void parse_statement(Parser* parser) {
     
     // Expression statement
     parse_expression(parser);
-    match(parser, TOKEN_PUNCTUATION); // ;
+    if (parser->current_token->type != TOKEN_PUNCTUATION ||
+        strcmp(parser->current_token->value, ";") != 0) {
+        fprintf(stderr, "Syntax error: Expected ';' after expression at line %d, column %d\n",
+                parser->current_token->line, parser->current_token->column);
+        exit(1);
+    }
+    advance(parser); // Skip semicolon
 }
 
 // Parse a method call
@@ -268,8 +347,6 @@ void parse_method_call(Parser* parser) {
 
 // Parse an expression
 void parse_expression(Parser* parser) {
-    printf("Parsing expression\n");
-    
     // Handle literals
     if (parser->current_token->type == TOKEN_LITERAL) {
         advance(parser);
@@ -280,6 +357,15 @@ void parse_expression(Parser* parser) {
     if (parser->current_token->type == TOKEN_IDENTIFIER) {
         advance(parser);
         
+        // Handle dot notation (e.g., System.out.println)
+        while (parser->current_token->type == TOKEN_PUNCTUATION &&
+               strcmp(parser->current_token->value, ".") == 0) {
+            advance(parser); // Skip dot
+            if (parser->current_token->type == TOKEN_IDENTIFIER) {
+                advance(parser);
+            }
+        }
+        
         // Handle method calls
         if (parser->current_token->type == TOKEN_PUNCTUATION &&
             strcmp(parser->current_token->value, "(") == 0) {
@@ -289,16 +375,41 @@ void parse_expression(Parser* parser) {
         
         // Handle operators
         if (parser->current_token->type == TOKEN_OPERATOR) {
+            char* op = strdup(parser->current_token->value);
             advance(parser);
-            parse_expression(parser);
+            
+            // Handle the right-hand side of the operator
+            if (parser->current_token->type == TOKEN_LITERAL ||
+                parser->current_token->type == TOKEN_IDENTIFIER) {
+                advance(parser);
+            } else {
+                fprintf(stderr, "Syntax error: Expected value after operator '%s' at line %d, column %d\n",
+                        op, parser->current_token->line, parser->current_token->column);
+                free(op);
+                exit(1);
+            }
+            free(op);
             return;
         }
+        return;
     }
     
     // Handle operators
     if (parser->current_token->type == TOKEN_OPERATOR) {
+        char* op = strdup(parser->current_token->value);
         advance(parser);
-        parse_expression(parser);
+        
+        // Handle the operand
+        if (parser->current_token->type == TOKEN_LITERAL ||
+            parser->current_token->type == TOKEN_IDENTIFIER) {
+            advance(parser);
+        } else {
+            fprintf(stderr, "Syntax error: Expected value after operator '%s' at line %d, column %d\n",
+                    op, parser->current_token->line, parser->current_token->column);
+            free(op);
+            exit(1);
+        }
+        free(op);
         return;
     }
     
@@ -310,6 +421,10 @@ void parse_expression(Parser* parser) {
         if (parser->current_token->type == TOKEN_PUNCTUATION &&
             strcmp(parser->current_token->value, ")") == 0) {
             advance(parser);
+        } else {
+            fprintf(stderr, "Syntax error: Expected ')' at line %d, column %d\n",
+                    parser->current_token->line, parser->current_token->column);
+            exit(1);
         }
         return;
     }
@@ -317,8 +432,6 @@ void parse_expression(Parser* parser) {
 
 // Main parse function
 void parse(Parser* parser) {
-    printf("Starting parsing\n");
-    
     while (parser->current_token->type != TOKEN_EOF) {
         if (parser->current_token->type == TOKEN_KEYWORD &&
             strcmp(parser->current_token->value, "class") == 0) {
@@ -327,7 +440,5 @@ void parse(Parser* parser) {
             advance(parser);
         }
     }
-    
-    // Don't try to match anything after EOF
-    printf("Parsing completed successfully\n");
+    fprintf(stderr, "Parsing completed successfully!\n");
 } 
